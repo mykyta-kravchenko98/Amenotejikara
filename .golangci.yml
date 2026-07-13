@@ -1,0 +1,19 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck    # unhandled errors (returning err without checking)
+    - govet
+    - ineffassign # assignments that change nothing (the value is not used)
+    - staticcheck # the most extensive set of static checks, covering many bugs
+
+    - misspell    # typos in comments/strings
+    - unconvert   # redundant explicit type conversions that change nothing
+    - unparam     # unused function parameters are often the result of refactoring.
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

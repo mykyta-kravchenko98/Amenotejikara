@@ -1,0 +1,20 @@
+# Build artifacts
+bin/
+*.exe
+*.test
+
+# Coverage
+coverage.out
+coverage.html
+
+# Go workspace files (not used here, but ignore if one gets created locally)
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+
+# OS cruft
+.DS_Store
+Thumbs.db

@@ -1,0 +1,42 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: amenotejikara-manager
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ops.amenotejikara.dev
+  resources:
+  - credentialrotations
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ops.amenotejikara.dev
+  resources:
+  - credentialrotations/status
+  verbs:
+  - get
+  - patch
+  - update

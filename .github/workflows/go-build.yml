@@ -1,5 +1,10 @@
 name: Go Build
 
+env:
+  AWS_REGION: eu-central-1
+  AWS_ACCOUNT_ID: "528081867341"
+  IMAGE: amenotejikara
+
 on:
   push:
     branches: [main]
@@ -9,6 +14,7 @@ on:
       - "api/**"
       - "go.mod"
       - "go.sum"
+      - "Dockerfile"
       - ".golangci.yml"
       - ".github/workflows/go-build.yml"
   pull_request:
@@ -19,6 +25,7 @@ on:
       - "api/**"
       - "go.mod"
       - "go.sum"
+      - "Dockerfile"
       - ".golangci.yml"
       - ".github/workflows/go-build.yml"
 
@@ -67,3 +74,48 @@ jobs:
       # not the arm64 targets Susanoo's Lambda functions build for.
       - name: Build manager (linux/amd64)
         run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /dev/null ./cmd/manager
+
+  image:
+    name: Build and push image
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # id-token: write lets this job exchange a GitHub OIDC token for
+      # temporary AWS creds - no long-lived keys in repo secrets. Requires
+      # a one-time IAM role setup mirroring ShortUrl's (see that repo's
+      # docs/CI_AWS_SETUP.md) - a new ECR repository named "amenotejikara"
+      # and a trust-policy role (e.g. amenotejikara-gha-ecr-push) scoped to
+      # push only to that repository. Neither exists yet as of this
+      # workflow being written - this job will fail on
+      # "Configure AWS credentials" until that's set up.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/amenotejikara-gha-ecr-push
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.ecr-login.outputs.registry }}/${{ env.IMAGE }}:${{ github.sha }}
+            ${{ steps.ecr-login.outputs.registry }}/${{ env.IMAGE }}:latest
+
+      # No "bump tags in shorturl-gitops" step yet, unlike ShortUrl's CI -
+      # there's nothing to bump until task 3 (deployment manifests) adds
+      # an image.tag/image.digest field somewhere in shorturl-gitops for
+      # this controller. steps.build.outputs.digest is already captured
+      # above so that step is a small addition once that target exists.

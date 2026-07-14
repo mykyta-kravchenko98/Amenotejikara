@@ -1,5 +1,9 @@
 # Amenotejikara
 
+A Kubernetes operator for zero-downtime credential rotation. It safely
+propagates rotated credentials to stateful backends before exposing them
+to workloads.
+
 A small Kubernetes operator that closes the one gap [External Secrets
 Operator](https://external-secrets.io) deliberately leaves open: ESO can
 generate a new credential and push it to any supported secret store, but it
@@ -87,7 +91,7 @@ spec:
   target:
     type: postgres
     postgres:
-      host: postgres.shorturl.svc.cluster.local
+      host: postgres
       port: "5432"
       database: ShortURLDataDB
       sslMode: disable
@@ -127,10 +131,44 @@ consistency model, or anything ESO-facing.
   safety net) - the schedule lives on the `PushSecret`'s
   `refreshInterval`.
 
+## Testing
+
+- `internal/rotator/postgres` has integration tests that run `Apply`
+  against a real Postgres (the same `postgres:16` service container CI
+  spins up) - password changes, wrong-current-password rejection, and the
+  username-change guard.
+- `internal/controller` has reconciler tests against
+  `sigs.k8s.io/controller-runtime/pkg/client/fake` (no envtest, no real
+  API server needed in CI) covering the state machine end to end: no-op
+  when pending already matches live, a full rotation including the
+  workload roll, a failed backend `Apply` leaving `live` untouched, and -
+  the safety-critical path - a failed `live` Secret write triggering a
+  compensating rollback on the backend. `Reconciler.RotatorFactory` is the
+  seam that lets tests inject a fake `Rotator` instead of dialing a real
+  backend; production wiring (`SetupWithManager`) leaves it nil and falls
+  back to the real `Target.Type` dispatch.
+
 ## Status
 
-Early scaffolding. First target backend is Postgres, first consumer is
-[ShortUrl](https://github.com/mykyta-kravchenko98/shorturl-gitops).
+Deployed and verified end to end against
+[ShortUrl](https://github.com/mykyta-kravchenko98/shorturl-gitops)'s
+Postgres in a real (if small) cluster: a password changed in AWS Secrets
+Manager was picked up, applied via `ALTER USER`, written to the live
+Secret, and the `shorturl` Deployment was rolled - confirmed by the old
+password failing authentication and the new one working, over the same
+network path the application itself uses. See shorturl-gitops's
+`docs/AMENOTEJIKARA_CUTOVER.md` for how the live `postgres-credentials`
+Secret was safely handed over from an `ExternalSecret` to this controller
+without any downtime risk.
+
+Adopting Amenotejikara for a Secret an `ExternalSecret` already owns (the
+common starting point) needs a phased cutover to avoid a cascading
+delete - see [docs/CUTOVER.md](docs/CUTOVER.md).
+
+First (and so far only) target backend is Postgres. The AWS-side trigger
+is still manual (`aws secretsmanager put-secret-value`) - wiring up ESO's
+`Generator` (`kind: Password`) + `PushSecret` "Rotate Secrets" pattern to
+automate that end is a known next step, not yet done.
 
 ## Name
 

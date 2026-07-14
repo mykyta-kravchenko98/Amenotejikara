@@ -80,10 +80,10 @@ func reconcileRequest(name string) ctrl.Request {
 	return ctrl.Request{NamespacedName: types.NamespacedName{Namespace: testNamespace, Name: name}}
 }
 
-func getCR(t *testing.T, c client.Client, name string) opsv1alpha1.CredentialRotation {
+func getCR(t *testing.T, c client.Client) opsv1alpha1.CredentialRotation {
 	t.Helper()
 	var cr opsv1alpha1.CredentialRotation
-	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: name}, &cr))
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: "shorturl-postgres"}, &cr))
 	return cr
 }
 
@@ -112,7 +112,7 @@ func TestReconcile_InSync_NoOp(t *testing.T) {
 	assert.Equal(t, resyncInterval, res.RequeueAfter)
 	assert.Empty(t, fr.calls, "rotator must not be invoked when pending already matches live")
 
-	got := getCR(t, c, "shorturl-postgres")
+	got := getCR(t, c)
 	assert.Equal(t, opsv1alpha1.PhaseInSync, got.Status.Phase)
 	assert.Nil(t, got.Status.LastRotatedAt, "no rotation happened, LastRotatedAt must stay unset")
 }
@@ -148,7 +148,7 @@ func TestReconcile_RotatesAndUpdatesLiveSecretAndRollsWorkload(t *testing.T) {
 	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: "shorturl"}, &gotDep))
 	assert.NotEmpty(t, gotDep.Spec.Template.Annotations["amenotejikara.dev/restartedAt"], "workload must be rolled after a successful rotation")
 
-	got := getCR(t, c, "shorturl-postgres")
+	got := getCR(t, c)
 	assert.Equal(t, opsv1alpha1.PhaseInSync, got.Status.Phase)
 	require.NotNil(t, got.Status.LastRotatedAt, "a real rotation must set LastRotatedAt")
 }
@@ -171,7 +171,7 @@ func TestReconcile_BackendApplyFails_LiveSecretUntouched(t *testing.T) {
 
 	assert.Equal(t, "old-pass", getSecretPassword(t, c, "live"), "a failed backend Apply must leave the live secret alone")
 
-	got := getCR(t, c, "shorturl-postgres")
+	got := getCR(t, c)
 	assert.Equal(t, opsv1alpha1.PhaseFailed, got.Status.Phase)
 	assert.Contains(t, got.Status.Message, "connection refused")
 }
@@ -210,7 +210,7 @@ func TestReconcile_LiveSecretWriteFails_RollsBackendBack(t *testing.T) {
 	assert.Equal(t, "new-pass", fr.calls[0].Password, "first call rotates the backend forward to the pending password")
 	assert.Equal(t, "old-pass", fr.calls[1].Password, "second call rolls the backend back to the still-live password")
 
-	got := getCR(t, c, "shorturl-postgres")
+	got := getCR(t, c)
 	assert.Equal(t, opsv1alpha1.PhaseFailed, got.Status.Phase)
 	assert.Contains(t, got.Status.Message, "rolled backend password back safely")
 }
@@ -233,7 +233,7 @@ func TestReconcile_UnsupportedTargetType(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `unsupported target.type "mysql"`)
 
-	got := getCR(t, c, "shorturl-postgres")
+	got := getCR(t, c)
 	assert.Equal(t, opsv1alpha1.PhaseFailed, got.Status.Phase)
 }
 
@@ -252,7 +252,7 @@ func TestReconcile_MissingPendingSecret_Failed(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reading pending secret")
 
-	got := getCR(t, c, "shorturl-postgres")
+	got := getCR(t, c)
 	assert.Equal(t, opsv1alpha1.PhaseFailed, got.Status.Phase)
 }
 

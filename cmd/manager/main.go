@@ -5,10 +5,12 @@ package main
 
 import (
 	"os"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	opsv1alpha1 "github.com/mykyta-kravchenko98/Amenotejikara/api/v1alpha1"
@@ -35,12 +37,33 @@ func utilRuntimeMustRegister(addToScheme func(*runtime.Scheme) error) {
 	}
 }
 
+func watchNamespaces() map[string]cache.Config {
+	raw := os.Getenv("WATCH_NAMESPACES")
+	if raw == "" {
+		raw = os.Getenv("POD_NAMESPACE")
+	}
+	if raw == "" {
+		return nil
+	}
+
+	namespaces := map[string]cache.Config{}
+	for _, ns := range strings.Split(raw, ",") {
+		if ns = strings.TrimSpace(ns); ns != "" {
+			namespaces[ns] = cache.Config{}
+		}
+	}
+	return namespaces
+}
+
 func main() {
 	ctrl.SetLogger(zap.New(zap.UseDevMode(false)))
 	logger := ctrl.Log.WithName("setup")
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
+		Cache: cache.Options{
+			DefaultNamespaces: watchNamespaces(),
+		},
 	})
 	if err != nil {
 		logger.Error(err, "unable to start manager")

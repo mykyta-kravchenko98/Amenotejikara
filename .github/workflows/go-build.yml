@@ -91,6 +91,8 @@ jobs:
       # workflow being written - this job will fail on
       # "Configure AWS credentials" until that's set up.
       id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
 
@@ -114,8 +116,66 @@ jobs:
             ${{ steps.ecr-login.outputs.registry }}/${{ env.IMAGE }}:${{ github.sha }}
             ${{ steps.ecr-login.outputs.registry }}/${{ env.IMAGE }}:latest
 
-      # No "bump tags in shorturl-gitops" step yet, unlike ShortUrl's CI -
-      # there's nothing to bump until task 3 (deployment manifests) adds
-      # an image.tag/image.digest field somewhere in shorturl-gitops for
-      # this controller. steps.build.outputs.digest is already captured
-      # above so that step is a small addition once that target exists.
+  sync-gitops:
+    name: Sync CRD and image tag to shorturl-gitops
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Keeps two things in shorturl-gitops from drifting out of sync with
+      # this repo: k8s/amenotejikara/crd.yaml (config/crd/bases/ is
+      # committed by a human after running controller-gen locally - no
+      # controller-gen in this CI image, so this just re-publishes what
+      # was already committed at this SHA) and deployment.yaml's image
+      # tag (same reasoning as ShortUrl's own tag-bump step - without
+      # this, :latest+IfNotPresent would silently never roll out new
+      # pushes, since ArgoCD only diffs git manifest text and that text
+      # never changes on its own).
+      - name: Sync CRD and image tag
+        env:
+          GITOPS_TOKEN: ${{ secrets.GITOPS_DEPLOY_TOKEN }}
+          NEW_TAG: ${{ github.sha }}
+        run: |
+          git clone https://x-access-token:${GITOPS_TOKEN}@github.com/mykyta-kravchenko98/shorturl-gitops.git gitops-repo
+          cd gitops-repo
+
+          sudo curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          {
+            echo "# Auto-synced by Amenotejikara's CI (.github/workflows/go-build.yml,"
+            echo "# 'sync-gitops' job) from config/crd/bases/ on every push to main."
+            echo "# Don't hand-edit this file directly - edit the CRD types in"
+            echo "# Amenotejikara's api/v1alpha1, run controller-gen, and push."
+            echo "#"
+            cat ../config/crd/bases/ops.amenotejikara.dev_credentialrotations.yaml
+          } > k8s/amenotejikara/crd.yaml
+
+          yq -i '.spec.template.spec.containers[0].image = "528081867341.dkr.ecr.eu-central-1.amazonaws.com/amenotejikara:" + strenv(NEW_TAG)' \
+            k8s/amenotejikara/deployment.yaml
+
+          git add k8s/amenotejikara/crd.yaml k8s/amenotejikara/deployment.yaml
+          if git diff --cached --quiet; then
+            echo "no change"
+            exit 0
+          fi
+          git commit -m "chore: sync CRD and bump amenotejikara image tag to ${NEW_TAG}"
+
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "pushed on attempt ${attempt}"
+              exit 0
+            fi
+
+            echo "push rejected on attempt ${attempt}, rebasing and retrying"
+            git fetch origin main
+            git rebase origin/main
+            sleep $(( (RANDOM % 5) + 1 ))
+          done
+
+          echo "failed to push sync after 5 attempts"
+          exit 1

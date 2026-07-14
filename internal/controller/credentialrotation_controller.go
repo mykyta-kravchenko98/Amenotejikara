@@ -34,6 +34,12 @@ const resyncInterval = 10 * time.Minute
 // Reconciler reconciles a CredentialRotation object.
 type Reconciler struct {
 	client.Client
+
+	// RotatorFactory overrides rotatorFor when set - the seam tests use to
+	// inject a fake rotator.Rotator instead of dialing a real backend.
+	// Production code (SetupWithManager) leaves this nil, so Reconcile
+	// falls back to rotatorFor's normal Target.Type dispatch.
+	RotatorFactory func(opsv1alpha1.RotationTarget) (rotator.Rotator, error)
 }
 
 // +kubebuilder:rbac:groups=ops.amenotejikara.dev,resources=credentialrotations,verbs=get;list;watch
@@ -75,7 +81,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	logger.Info("pending credential differs from live, rotating",
 		"credentialrotation", cr.Name)
 
-	rot, err := r.rotatorFor(cr.Spec.Target)
+	factory := r.rotatorFor
+	if r.RotatorFactory != nil {
+		factory = r.RotatorFactory
+	}
+	rot, err := factory(cr.Spec.Target)
 	if err != nil {
 		return r.failed(ctx, &cr, err)
 	}

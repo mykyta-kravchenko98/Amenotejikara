@@ -11,6 +11,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	opsv1alpha1 "github.com/mykyta-kravchenko98/Amenotejikara/api/v1alpha1"
@@ -22,6 +23,8 @@ import (
 // (Secret, Deployment, ...) via clientgoscheme, plus our own CRD via
 // opsv1alpha1.AddToScheme (see api/v1alpha1/groupversion_info.go).
 var scheme = runtime.NewScheme()
+
+const healthProbeBindAddress = ":8081"
 
 func init() {
 	utilRuntimeMustRegister(clientgoscheme.AddToScheme)
@@ -64,6 +67,7 @@ func main() {
 		Cache: cache.Options{
 			DefaultNamespaces: watchNamespaces(),
 		},
+		HealthProbeBindAddress: healthProbeBindAddress,
 	})
 	if err != nil {
 		logger.Error(err, "unable to start manager")
@@ -73,6 +77,15 @@ func main() {
 	reconciler := &controller.Reconciler{Client: mgr.GetClient()}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to set up CredentialRotation controller")
+		os.Exit(1)
+	}
+
+	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
+		logger.Error(err, "unable to set up health check")
+		os.Exit(1)
+	}
+	if err := mgr.AddReadyzCheck("ping", healthz.Ping); err != nil {
+		logger.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
 

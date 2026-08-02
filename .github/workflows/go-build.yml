@@ -117,7 +117,7 @@ jobs:
             ${{ steps.ecr-login.outputs.registry }}/${{ env.IMAGE }}:latest
 
   sync-gitops:
-    name: Sync CRD and image tag to shorturl-gitops
+    name: Sync CRD and image digest to shorturl-gitops
     needs: image
     runs-on: ubuntu-latest
     steps:
@@ -127,16 +127,19 @@ jobs:
       # this repo: k8s/amenotejikara/crd.yaml (config/crd/bases/ is
       # committed by a human after running controller-gen locally - no
       # controller-gen in this CI image, so this just re-publishes what
-      # was already committed at this SHA) and deployment.yaml's image
-      # tag (same reasoning as ShortUrl's own tag-bump step - without
-      # this, :latest+IfNotPresent would silently never roll out new
-      # pushes, since ArgoCD only diffs git manifest text and that text
-      # never changes on its own).
-      - name: Sync CRD and image tag
+      # was already committed at this SHA) and deployment.yaml's immutable
+      # image digest. The digest is produced by docker/build-push-action,
+      # so ArgoCD rolls out the exact bytes built by this workflow.
+      - name: Sync CRD and image digest
         env:
           GITOPS_TOKEN: ${{ secrets.GITOPS_DEPLOY_TOKEN }}
-          NEW_TAG: ${{ github.sha }}
+          NEW_DIGEST: ${{ needs.image.outputs.digest }}
         run: |
+          if [[ ! "$NEW_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "invalid image digest: $NEW_DIGEST"
+            exit 1
+          fi
+
           git clone https://x-access-token:${GITOPS_TOKEN}@github.com/mykyta-kravchenko98/shorturl-gitops.git gitops-repo
           cd gitops-repo
 
@@ -155,7 +158,7 @@ jobs:
             cat ../config/crd/bases/ops.amenotejikara.dev_credentialrotations.yaml
           } > k8s/amenotejikara/crd.yaml
 
-          yq -i '.spec.template.spec.containers[0].image = "528081867341.dkr.ecr.eu-central-1.amazonaws.com/amenotejikara:" + strenv(NEW_TAG)' \
+          yq -i '.spec.template.spec.containers[0].image = "528081867341.dkr.ecr.eu-central-1.amazonaws.com/amenotejikara@" + strenv(NEW_DIGEST)' \
             k8s/amenotejikara/deployment.yaml
 
           git add k8s/amenotejikara/crd.yaml k8s/amenotejikara/deployment.yaml
@@ -163,7 +166,7 @@ jobs:
             echo "no change"
             exit 0
           fi
-          git commit -m "chore: sync CRD and bump amenotejikara image tag to ${NEW_TAG}"
+          git commit -m "chore: sync CRD and pin amenotejikara image digest"
 
           for attempt in 1 2 3 4 5; do
             if git push; then
